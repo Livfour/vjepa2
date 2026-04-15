@@ -13,9 +13,9 @@ from timm.models.layers import drop_path
 
 def rotate_queries_or_keys(x, pos, n_registers, has_cls_first):
     B, num_heads, N, D = x.size()
-    assert (
-        D % 2 == 0
-    ), "Embedding dimension must be a multiple of 2 for block matrix rotation"
+    assert D % 2 == 0, (
+        "Embedding dimension must be a multiple of 2 for block matrix rotation"
+    )
 
     n_cls = 1 if has_cls_first else 0
     start_ctx = n_cls
@@ -25,13 +25,14 @@ def rotate_queries_or_keys(x, pos, n_registers, has_cls_first):
     x_ctx = x[..., start_ctx:end_ctx, :]
     x_reg = x[..., end_ctx:, :] if n_registers > 0 else None
 
-    omega = torch.arange(D // 2, dtype=x.dtype, device=x.device)
+    pos = pos.to(device=x.device, dtype=torch.float32)
+    omega = torch.arange(D // 2, dtype=torch.float32, device=x.device)
     omega /= D / 2.0
     omega = 1.0 / 10000**omega
     freq = torch.einsum("..., f -> ... f", pos, omega)
 
-    emb_sin = freq.sin()
-    emb_cos = freq.cos()
+    emb_sin = freq.sin().to(dtype=x.dtype)
+    emb_cos = freq.cos().to(dtype=x.dtype)
 
     emb_sin = emb_sin.repeat_interleave(2, dim=-1)
     emb_cos = emb_cos.repeat_interleave(2, dim=-1)
@@ -194,7 +195,7 @@ class RoPEAttention(nn.Module):
         frame_ids = self._get_frame_pos(ids, H_patches, W_patches)
         height_ids = self._get_height_pos(ids, H_patches, W_patches)
         width_ids = (ids - tokens_per_frame * frame_ids) - tokens_per_row * height_ids
-        return 1.0 * frame_ids, 1.0 * height_ids, 1.0 * width_ids
+        return frame_ids, height_ids, width_ids
 
     def forward(
         self,

@@ -25,7 +25,9 @@ def build_action_block_causal_attention_mask(T, H, W, add_tokens=1):
 
 def rotate_queries_or_keys(x, pos):
     B, num_heads, N, D = x.size()
-    assert D % 2 == 0, "Embedding dimension must be a multiple of 2 for block matrix rotation"
+    assert D % 2 == 0, (
+        "Embedding dimension must be a multiple of 2 for block matrix rotation"
+    )
 
     # -- compute angle for each position
     omega = torch.arange(D // 2, dtype=x.dtype, device=x.device)
@@ -70,7 +72,14 @@ class DropPath(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0):
+    def __init__(
+        self,
+        in_features,
+        hidden_features=None,
+        out_features=None,
+        act_layer=nn.GELU,
+        drop=0.0,
+    ):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
@@ -90,7 +99,13 @@ class MLP(nn.Module):
 
 class SwiGLUFFN(nn.Module):
     def __init__(
-        self, in_features, hidden_features=None, out_features=None, act_layer=nn.SiLU, drop=0.0, wide_silu=True
+        self,
+        in_features,
+        hidden_features=None,
+        out_features=None,
+        act_layer=nn.SiLU,
+        drop=0.0,
+        wide_silu=True,
     ):
         super().__init__()
         out_features = out_features or in_features
@@ -98,7 +113,9 @@ class SwiGLUFFN(nn.Module):
         if wide_silu:
             swiglu_hidden_features = int(2 * hidden_features / 3)
             align_as = 8
-            swiglu_hidden_features = (swiglu_hidden_features + align_as - 1) // align_as * align_as
+            swiglu_hidden_features = (
+                (swiglu_hidden_features + align_as - 1) // align_as * align_as
+            )
         self.fc1 = nn.Linear(in_features, swiglu_hidden_features)
         self.fc2 = nn.Linear(in_features, swiglu_hidden_features)
         self.act = act_layer()
@@ -165,7 +182,9 @@ class ACRoPEAttention(nn.Module):
         width_ids = (ids - tokens_per_frame * frame_ids) - tokens_per_row * height_ids
         return 1.0 * frame_ids, 1.0 * height_ids, 1.0 * width_ids
 
-    def forward(self, x, mask=None, attn_mask=None, T=None, H=None, W=None, action_tokens=0):
+    def forward(
+        self, x, mask=None, attn_mask=None, T=None, H=None, W=None, action_tokens=0
+    ):
         B, N, C = x.size()
 
         # -- compute position of each frame token
@@ -189,15 +208,27 @@ class ACRoPEAttention(nn.Module):
                 a = x[:, :, i : i + 1, :].flatten(1, 2)
                 # Note action tokens do not work with masking
                 # -- compute qkv for action tokens and rotate
-                qkv = self.qkv(a).unflatten(-1, (3, self.num_heads, -1)).permute(2, 0, 3, 1, 4)
+                qkv = (
+                    self.qkv(a)
+                    .unflatten(-1, (3, self.num_heads, -1))
+                    .permute(2, 0, 3, 1, 4)
+                )
                 q, k, v = qkv[0], qkv[1], qkv[2]  # [B, num_heads, N, D]
                 # --
-                qd = rotate_queries_or_keys(q[..., : self.d_dim], pos=torch.arange(T, device=x.device))
-                kd = rotate_queries_or_keys(k[..., : self.d_dim], pos=torch.arange(T, device=x.device))
+                qd = rotate_queries_or_keys(
+                    q[..., : self.d_dim], pos=torch.arange(T, device=x.device)
+                )
+                kd = rotate_queries_or_keys(
+                    k[..., : self.d_dim], pos=torch.arange(T, device=x.device)
+                )
                 qr = q[..., self.d_dim :]
                 kr = k[..., self.d_dim :]
-                action_q += [torch.cat([qd, qr], dim=-1).view(B, self.num_heads, T, 1, -1)]
-                action_k += [torch.cat([kd, kr], dim=-1).view(B, self.num_heads, T, 1, -1)]
+                action_q += [
+                    torch.cat([qd, qr], dim=-1).view(B, self.num_heads, T, 1, -1)
+                ]
+                action_k += [
+                    torch.cat([kd, kr], dim=-1).view(B, self.num_heads, T, 1, -1)
+                ]
                 action_v += [v.view(B, self.num_heads, T, 1, -1)]
 
             action_q = torch.cat(action_q, dim=3).flatten(2, 3)
@@ -248,7 +279,12 @@ class ACRoPEAttention(nn.Module):
         if attn_mask is not None or self.use_sdpa:
             with torch.backends.cuda.sdp_kernel():
                 x = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.proj_drop_prob, is_causal=self.is_causal, attn_mask=attn_mask
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.proj_drop_prob,
+                    is_causal=self.is_causal,
+                    attn_mask=attn_mask,
                 )
                 attn = None
         else:
@@ -328,7 +364,9 @@ class RoPEAttention(nn.Module):
         width_ids = (ids - tokens_per_frame * frame_ids) - tokens_per_row * height_ids
         return frame_ids, height_ids, width_ids
 
-    def forward(self, x, mask=None, attn_mask=None, T=None, H_patches=None, W_patches=None):
+    def forward(
+        self, x, mask=None, attn_mask=None, T=None, H_patches=None, W_patches=None
+    ):
         B, N, C = x.size()
         grid_depth = int(N // (self.grid_size * self.grid_size))
 
@@ -340,7 +378,9 @@ class RoPEAttention(nn.Module):
             d_mask, h_mask, w_mask = self.separate_positions(mask, H_patches, W_patches)
         else:
             if T is None or H_patches is None or W_patches is None:
-                mask = torch.arange(int(grid_depth * self.grid_size * self.grid_size), device=x.device)
+                mask = torch.arange(
+                    int(grid_depth * self.grid_size * self.grid_size), device=x.device
+                )
             else:
                 mask = torch.arange(int(T * H_patches * W_patches), device=x.device)
             d_mask, h_mask, w_mask = self.separate_positions(mask, H_patches, W_patches)
@@ -372,7 +412,12 @@ class RoPEAttention(nn.Module):
         if attn_mask is not None or self.use_sdpa:
             with torch.backends.cuda.sdp_kernel():
                 x = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.proj_drop_prob, is_causal=self.is_causal, attn_mask=attn_mask
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.proj_drop_prob,
+                    is_causal=self.is_causal,
+                    attn_mask=attn_mask,
                 )
                 attn = None
         else:
@@ -413,13 +458,22 @@ class Attention(nn.Module):
 
     def forward(self, x, mask=None, attn_mask=None):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
         q, k, v = qkv[0], qkv[1], qkv[2]  # [B, num_heads, N, D]
 
         if attn_mask is not None or self.use_sdpa:
             with torch.backends.cuda.sdp_kernel():
                 x = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.proj_drop_prob, is_causal=self.is_causal, attn_mask=attn_mask
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.proj_drop_prob,
+                    is_causal=self.is_causal,
+                    attn_mask=attn_mask,
                 )
                 attn = None
         else:
@@ -485,15 +539,34 @@ class ACBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         if act_layer is nn.SiLU:
             self.mlp = SwiGLUFFN(
-                in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, wide_silu=wide_silu, drop=drop
+                in_features=dim,
+                hidden_features=mlp_hidden_dim,
+                act_layer=act_layer,
+                wide_silu=wide_silu,
+                drop=drop,
             )
         else:
-            self.mlp = MLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+            self.mlp = MLP(
+                in_features=dim,
+                hidden_features=mlp_hidden_dim,
+                act_layer=act_layer,
+                drop=drop,
+            )
 
-    def forward(self, x, mask=None, attn_mask=None, T=None, H=None, W=None, action_tokens=0):
+    def forward(
+        self, x, mask=None, attn_mask=None, T=None, H=None, W=None, action_tokens=0
+    ):
         y = self.norm1(x)
         if isinstance(self.attn, ACRoPEAttention):
-            y = self.attn(y, mask=mask, attn_mask=attn_mask, T=T, H=H, W=W, action_tokens=action_tokens)
+            y = self.attn(
+                y,
+                mask=mask,
+                attn_mask=attn_mask,
+                T=T,
+                H=H,
+                W=W,
+                action_tokens=action_tokens,
+            )
         else:
             y = self.attn(y, mask=mask, attn_mask=attn_mask)
         x = x + self.drop_path(y)
@@ -553,14 +626,32 @@ class Block(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         if act_layer is nn.SiLU:
             self.mlp = SwiGLUFFN(
-                in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, wide_silu=wide_silu, drop=drop
+                in_features=dim,
+                hidden_features=mlp_hidden_dim,
+                act_layer=act_layer,
+                wide_silu=wide_silu,
+                drop=drop,
             )
         else:
-            self.mlp = MLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+            self.mlp = MLP(
+                in_features=dim,
+                hidden_features=mlp_hidden_dim,
+                act_layer=act_layer,
+                drop=drop,
+            )
 
-    def forward(self, x, mask=None, attn_mask=None, T=None, H_patches=None, W_patches=None):
+    def forward(
+        self, x, mask=None, attn_mask=None, T=None, H_patches=None, W_patches=None
+    ):
         if isinstance(self.attn, RoPEAttention):
-            y = self.attn(self.norm1(x), mask=mask, attn_mask=attn_mask, T=T, H_patches=H_patches, W_patches=W_patches)
+            y = self.attn(
+                self.norm1(x),
+                mask=mask,
+                attn_mask=attn_mask,
+                T=T,
+                H_patches=H_patches,
+                W_patches=W_patches,
+            )
         else:
             y = self.attn(self.norm1(x), mask=mask, attn_mask=attn_mask)
         x = x + self.drop_path(y)
@@ -581,10 +672,18 @@ class CrossAttention(nn.Module):
 
     def forward(self, q, x):
         B, n, C = q.shape
-        q = self.q(q).reshape(B, n, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        q = (
+            self.q(q)
+            .reshape(B, n, self.num_heads, C // self.num_heads)
+            .permute(0, 2, 1, 3)
+        )
 
         B, N, C = x.shape
-        kv = self.kv(x).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        kv = (
+            self.kv(x)
+            .reshape(B, N, 2, self.num_heads, C // self.num_heads)
+            .permute(2, 0, 3, 1, 4)
+        )
         k, v = kv[0], kv[1]  # (batch_size, num_heads, seq_len, feature_dim_per_head)
 
         if self.use_sdpa:
@@ -600,13 +699,23 @@ class CrossAttention(nn.Module):
 
 
 class CrossAttentionBlock(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, qkv_bias=False, act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+    def __init__(
+        self,
+        dim,
+        num_heads,
+        mlp_ratio=4.0,
+        qkv_bias=False,
+        act_layer=nn.GELU,
+        norm_layer=nn.LayerNorm,
+    ):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.xattn = CrossAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias)
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = MLP(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer)
+        self.mlp = MLP(
+            in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer
+        )
 
     def forward(self, q, x):
         y = self.xattn(q, self.norm1(x))
